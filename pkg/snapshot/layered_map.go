@@ -20,17 +20,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/GoogleContainerTools/kaniko/pkg/timing"
 	"github.com/GoogleContainerTools/kaniko/pkg/util"
+	"github.com/sirupsen/logrus"
 )
 
 type LayeredMap struct {
-	layers    []map[string]string
-	whiteouts []map[string]string
-	hasher    func(string) (string, error)
+	layers         []map[string]string
+	whiteouts      []map[string]struct{}
+	layerHashCache map[string]string
+	hasher         func(string) (string, error)
 	// cacheHasher doesn't include mtime in it's hash so that filesystem cache keys are stable
 	cacheHasher func(string) (string, error)
 }
@@ -41,11 +44,12 @@ func NewLayeredMap(h func(string) (string, error), c func(string) (string, error
 		cacheHasher: c,
 	}
 	l.layers = []map[string]string{}
+	l.layerHashCache = map[string]string{}
 	return &l
 }
 
 func (l *LayeredMap) Snapshot() {
-	l.whiteouts = append(l.whiteouts, map[string]string{})
+	l.whiteouts = append(l.whiteouts, map[string]struct{}{})
 	l.layers = append(l.layers, map[string]string{})
 }
 
@@ -80,46 +84,59 @@ func (l *LayeredMap) Get(s string) (string, bool) {
 	return "", false
 }
 
-func (l *LayeredMap) GetWhiteout(s string) (string, bool) {
+func (l *LayeredMap) GetWhiteout(s string) bool {
 	for i := len(l.whiteouts) - 1; i >= 0; i-- {
-		if v, ok := l.whiteouts[i][s]; ok {
-			return v, ok
+		if _, ok := l.whiteouts[i][s]; ok {
+			return ok
 		}
 	}
-	return "", false
+	return false
 }
 
 func (l *LayeredMap) MaybeAddWhiteout(s string) bool {
-	whiteout, ok := l.GetWhiteout(s)
-	if ok && whiteout == s {
+	ok := l.GetWhiteout(s)
+	if ok {
 		return false
 	}
-	l.whiteouts[len(l.whiteouts)-1][s] = s
+	l.whiteouts[len(l.whiteouts)-1][s] = struct{}{}
 	return true
 }
 
 // Add will add the specified file s to the layered map.
 func (l *LayeredMap) Add(s string) error {
 	// Use hash function and add to layers
-	newV, err := l.hasher(s)
+	newV, err := func(s string) (string, error) {
+		if v, ok := l.layerHashCache[s]; ok {
+			// clear it cache for next layer.
+			delete(l.layerHashCache, s)
+			return v, nil
+		}
+		return l.hasher(s)
+	}(s)
 	if err != nil {
-		return fmt.Errorf("Error creating hash for %s: %v", s, err)
+		return fmt.Errorf("error creating hash for %s: %v", s, err)
 	}
 	l.layers[len(l.layers)-1][s] = newV
 	return nil
 }
 
-// CheckFileChange checkes whether a given file changed
+// CheckFileChange checks whether a given file changed
 // from the current layered map by its hashing function.
 // Returns true if the file is changed.
 func (l *LayeredMap) CheckFileChange(s string) (bool, error) {
-	oldV, ok := l.Get(s)
 	t := timing.Start("Hashing files")
 	defer timing.DefaultRun.Stop(t)
 	newV, err := l.hasher(s)
 	if err != nil {
+		// if this file does not exist in the new layer return.
+		if os.IsNotExist(err) {
+			logrus.Tracef("%s detected as changed but does not exist", s)
+			return false, nil
+		}
 		return false, err
 	}
+	l.layerHashCache[s] = newV
+	oldV, ok := l.Get(s)
 	if ok && newV == oldV {
 		return false, nil
 	}

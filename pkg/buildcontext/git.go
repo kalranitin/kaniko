@@ -18,9 +18,26 @@ package buildcontext
 
 import (
 	"os"
+	"strings"
 
 	"github.com/GoogleContainerTools/kaniko/pkg/constants"
 	git "gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
+)
+
+const (
+	gitPullMethodEnvKey = "GIT_PULL_METHOD"
+	gitPullMethodHTTPS  = "https"
+	gitPullMethodHTTP   = "http"
+
+	gitAuthUsernameEnvKey = "GIT_USERNAME"
+	gitAuthPasswordEnvKey = "GIT_PASSWORD"
+)
+
+var (
+	supportedGitPullMethods = map[string]bool{gitPullMethodHTTPS: true, gitPullMethodHTTP: true}
 )
 
 // Git unifies calls to download and unpack the build context.
@@ -31,9 +48,36 @@ type Git struct {
 // UnpackTarFromBuildContext will provide the directory where Git Repository is Cloned
 func (g *Git) UnpackTarFromBuildContext() (string, error) {
 	directory := constants.BuildContextDir
-	_, err := git.PlainClone(directory, false, &git.CloneOptions{
-		URL:      "https://" + g.context,
-		Progress: os.Stdout,
-	})
+	parts := strings.Split(g.context, "#")
+	options := git.CloneOptions{
+		URL:               getGitPullMethod() + "://" + parts[0],
+		Auth:              getGitAuth(),
+		Progress:          os.Stdout,
+		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+	}
+	if len(parts) > 1 {
+		options.ReferenceName = plumbing.ReferenceName(parts[1])
+	}
+	_, err := git.PlainClone(directory, false, &options)
 	return directory, err
+}
+
+func getGitAuth() transport.AuthMethod {
+	username := os.Getenv(gitAuthUsernameEnvKey)
+	password := os.Getenv(gitAuthPasswordEnvKey)
+	if username != "" || password != "" {
+		return &http.BasicAuth{
+			Username: username,
+			Password: password,
+		}
+	}
+	return nil
+}
+
+func getGitPullMethod() string {
+	gitPullMethod := os.Getenv(gitPullMethodEnvKey)
+	if ok := supportedGitPullMethods[gitPullMethod]; !ok {
+		gitPullMethod = gitPullMethodHTTPS
+	}
+	return gitPullMethod
 }

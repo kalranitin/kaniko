@@ -18,7 +18,7 @@ package commands
 
 import (
 	"github.com/GoogleContainerTools/kaniko/pkg/dockerfile"
-	"github.com/google/go-containerregistry/pkg/v1"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -37,6 +37,10 @@ type DockerCommand interface {
 	// A list of files to snapshot, empty for metadata commands or nil if we don't know
 	FilesToSnapshot() []string
 
+	// ProvidesFileToSnapshot is true for all metadata commands and commands which know
+	// list of files changed. False for Run command.
+	ProvidesFilesToSnapshot() bool
+
 	// Return a cache-aware implementation of this command, if it exists.
 	CacheCommand(v1.Image) DockerCommand
 
@@ -48,11 +52,17 @@ type DockerCommand interface {
 	RequiresUnpackedFS() bool
 
 	ShouldCacheOutput() bool
+
+	// ShouldDetectDeletedFiles returns true if the command could delete files.
+	ShouldDetectDeletedFiles() bool
 }
 
-func GetCommand(cmd instructions.Command, buildcontext string) (DockerCommand, error) {
+func GetCommand(cmd instructions.Command, buildcontext string, useNewRun bool) (DockerCommand, error) {
 	switch c := cmd.(type) {
 	case *instructions.RunCommand:
+		if useNewRun {
+			return &RunMarkerCommand{cmd: c}, nil
+		}
 		return &RunCommand{cmd: c}, nil
 	case *instructions.CopyCommand:
 		return &CopyCommand{cmd: c, buildcontext: buildcontext}, nil

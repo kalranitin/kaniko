@@ -18,7 +18,7 @@ package commands
 
 import (
 	"github.com/GoogleContainerTools/kaniko/pkg/dockerfile"
-	"github.com/google/go-containerregistry/pkg/v1"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 type BaseCommand struct {
@@ -30,6 +30,10 @@ func (b *BaseCommand) CacheCommand(v1.Image) DockerCommand {
 
 func (b *BaseCommand) FilesToSnapshot() []string {
 	return []string{}
+}
+
+func (b *BaseCommand) ProvidesFilesToSnapshot() bool {
+	return true
 }
 
 func (b *BaseCommand) FilesUsedFromContext(_ *v1.Config, _ *dockerfile.BuildArgs) ([]string, error) {
@@ -45,5 +49,9 @@ func (b *BaseCommand) RequiresUnpackedFS() bool {
 }
 
 func (b *BaseCommand) ShouldCacheOutput() bool {
+	return false
+}
+
+func (b *BaseCommand) ShouldDetectDeletedFiles() bool {
 	return false
 }

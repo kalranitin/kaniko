@@ -67,35 +67,83 @@ _These tests will not run correctly unless you have [checked out your fork into 
 
 ### Integration tests
 
-The integration tests live in [`integration`](./integration) and can be run with:
+Currently the integration tests that live in [`integration`](./integration) can be run against your own gcloud space or a local registry.
 
-```shell
-export GCS_BUCKET="gs://<your bucket>"
-export IMAGE_REPO="gcr.io/somerepo"
-make integration-test
-```
+In either case, you will need the following tools:
 
-If you want to run `make integration-test`, you must override the project using environment variables:
+* [`container-diff`](https://github.com/GoogleContainerTools/container-diff#installation)
 
-* `GCS_BUCKET` - The name of your GCS bucket
-* `IMAGE_REPO` - The path to your docker image repo
+#### GCloud
 
-You can also run tests with `go test`, for example to run tests individually:
-
-```shell
-go test -v --bucket $GCS_BUCKET --repo $IMAGE_REPO -run TestLayers/test_layer_Dockerfile_test_copy_bucket
-```
-
-Requirements:
+To run integration tests with your GCloud Storage, you will also need the following tools:
 
 * [`gcloud`](https://cloud.google.com/sdk/install)
 * [`gsutil`](https://cloud.google.com/storage/docs/gsutil_install)
-* [`container-diff`](https://github.com/GoogleContainerTools/container-diff#installation)
 * A bucket in [GCS](https://cloud.google.com/storage/) which you have write access to via
   the user currently logged into `gcloud`
 * An image repo which you have write access to via the user currently logged into `gcloud`
 
-These tests will be kicked off by [reviewers](#reviews) for submitted PRs.
+Once this step done, you must override the project using environment variables:
+
+* `GCS_BUCKET` - The name of your GCS bucket
+* `IMAGE_REPO` - The path to your docker image repo
+
+This can be done as follows:
+
+```shell
+export GCS_BUCKET="gs://<your bucket>"
+export IMAGE_REPO="gcr.io/somerepo"
+```
+
+Login for both user and application credentials
+```shell
+gcloud auth login
+gcloud auth application-default login
+```
+
+Then you can launch integration tests as follows:
+
+```shell
+make integration-test
+```
+
+You can also run tests with `go test`, for example to run tests individually:
+
+```shell
+go test ./integration -v --bucket $GCS_BUCKET --repo $IMAGE_REPO -run TestLayers/test_layer_Dockerfile_test_copy_bucket
+```
+
+These tests will be kicked off by [reviewers](#reviews) for submitted PRs by the kokoro task.
+
+#### Local repository
+
+To run integration tests locally against a local registry, install a local docker registry
+
+```shell
+docker run --rm  -d -p 5000:5000 --name registry registry:2
+```
+
+Then export the `IMAGE_REPO` variable with  the `localhost:5000`value
+
+```shell
+export IMAGE_REPO=localhost:5000
+```
+
+And run the integration tests
+
+```shell
+make integration-test
+```
+
+You can also run tests with `go test`, for example to run tests individually:
+
+```shell
+go test ./integration -v --repo localhost:5000 -run TestLayers/test_layer_Dockerfile_test_copy_bucket
+```
+
+These tests will be kicked off by [reviewers](#reviews) for submitted PRs by the travis task.
+
+
 
 ### Benchmarking
 
@@ -117,6 +165,21 @@ Additionally, the integration tests can output benchmarking information to a `be
 ```shell
 BENCHMARK=true go test -v --bucket $GCS_BUCKET --repo $IMAGE_REPO
 ```
+
+#### Benchmarking your GCB runs
+If you are GCB builds are slow, you can check which phases in kaniko are bottlenecks or taking more time.
+To do this, add "BENCHMARK_ENV" to your cloudbuild.yaml like this.
+```shell script
+steps:
+- name: 'gcr.io/kaniko-project/executor:latest'
+  args:
+  - --build-arg=NUM=${_COUNT}
+  - --no-push
+  - --snapshotMode=redo
+  env:
+  - 'BENCHMARK_FILE=gs://$PROJECT_ID/gcb/benchmark_file'
+```
+You can download the file `gs://$PROJECT_ID/gcb/benchmark_file` using `gsutil cp` command.
 
 ## Creating a PR
 
